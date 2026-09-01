@@ -1,0 +1,72 @@
+﻿<Mod>
+
+	<!-- General information about the mod. -->
+	<Name>Multiplayer Text to Speech</Name>
+	<Author>ahscholt</Author>
+	<Version>1.0.0</Version>
+
+	<Description>
+Reads multiplayer chat aloud, in a Klatt formant voice of the same family
+DECtalk used, positioned at the speaking player's core block. Each player
+gets their own voice, derived from their name.
+
+A gear beside the chat window opens the volume options, including a slider
+per player. That panel needs the UI Factory mod; without it everything is
+still reachable from the "tts" console command.
+	</Description>
+
+	<Icon name="mptts-icon" />
+	<WorkshopThumbnail name="mptts-thumb" />
+
+	<Debug>false</Debug>
+
+	<!-- Required, and not optional in practice: the loader refuses a manifest
+	     without it ("must contain MultiplayerCompatible element!"). True here
+	     because the mod only reads chat and plays local audio: it never writes
+	     to the machine, the level or the network, so it changes nothing any
+	     other player sees. -->
+	<MultiplayerCompatible>true</MultiplayerCompatible>
+
+	<LoadOrder>0</LoadOrder>
+
+	<!-- Deliberately NOT using <LoadInTitleScreen />.
+	     With it, the game runs this mod's code before the player can reach the
+	     mods menu, so a fatal error here locks them out of Besiege rather than
+	     out of the mod. This mod has nothing to do on the title screen: chat
+	     only exists in a level. Mods are never unloaded once loaded, so after
+	     the first level it is present everywhere anyway. -->
+
+	<!-- A pre-built assembly rather than a <ScriptAssembly>. The game caches a
+	     ScriptAssembly compile once and never invalidates it, so edited sources
+	     would silently keep running the first build. -->
+	<!-- A pre-built assembly is required, not just convenient. A
+	     ScriptAssembly is compiled during the load phase, before any other
+	     mod's assembly is in the AppDomain, so every Besiege.UI reference
+	     would fail to resolve. A pre-built DLL binds them lazily, on first
+	     use, by which point UI Factory is loaded. -->
+	<Assemblies>
+		<Assembly path="MultiplayerTTS.dll" />
+	</Assemblies>
+
+	<!-- Drawn by tools/make_icon.py: a line-art robot, black on transparency.
+
+	     These paths are relative to the mod's Resources/ folder, NOT to the
+	     mod root: ModPaths appends "Resources" before combining. Writing
+	     "Resources/icon.png" here looks right, resolves to
+	     Resources/Resources/icon.png, and the resource then never loads.
+	     That also makes Modding.ModResource.AllResourcesLoaded false for this
+	     mod forever, because that property checks the calling mod's own
+	     resource list.
+
+	     Resource loading is also case-sensitive on Linux, so the names here
+	     and the files on disk have to match exactly. -->
+	<Resources>
+		<Texture name="mptts-icon" path="icon.png" />
+		<Texture name="mptts-thumb" path="thumb.png" />
+	</Resources>
+
+
+
+<!-- This value is automatically generated. Do not change it or you may break machine&level save files. -->
+<ID>4f58f404-939e-40db-a90e-9929221ff1bf</ID>
+</Mod>
