@@ -1,161 +1,151 @@
 #!/usr/bin/env python3
-"""Draws the mod's icon and Workshop thumbnail: a line-art robot, black
-outline on transparency.
+"""Draws the mod's icon: the speech glyph over Background.jpg.
 
-A robot because the mod's whole point is a synthetic voice, and a flat outline
-because that is what reads at 256px in the mods list — a shaded illustration
-turns to mush at that size, and Besiege's own mod list is a row of small
-squares.
+    ./tools/make_icon.py
+    ./tools/make_icon.py --preview      # also a 1024px look at it
 
-Everything is drawn at 4x and downsampled, which is the cheapest anti-aliasing
-there is: PIL's own drawing is hard-edged, and a 4x box-filtered downsample
-gives clean strokes at every angle without a single extra dependency.
+Writes MultiplayerTTS/Resources/icon.png, 256px, which Mod.xml names as
+<Icon> -- the tile in the game's mods menu.
 
-    ./tools/make_icon.py                 writes Resources/icon.png + thumb.png
-    ./tools/make_icon.py --preview p.png ... and a white-backed preview to look at
+The glyph is TTS.png, the same white page-and-speaker mark the hand-drawn
+Thumbnail.xcf is built around, so the mods list and the Workshop page carry one
+mark rather than two. The lettering stays on the thumbnail: at 256px a mod name
+is a smear, and Besiege's mods list is a row of small squares.
+
+The Workshop thumbnail is NOT written here. It is Thumbnail.png in the
+repository root, drawn by hand and copied into Resources/, and this script would
+otherwise overwrite it.
+
+Everything is composed at 4x and scaled down at the end, which is the cheapest
+anti-aliasing there is and what the other mods in this family do.
 """
+
+import argparse
 import os
 import sys
 
-from PIL import Image, ImageDraw
+try:
+    from PIL import Image, ImageDraw
+except ImportError:
+    sys.exit("This needs Pillow: pip install --user Pillow")
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-RESOURCES = os.path.join(HERE, "..", "MultiplayerTTS", "Resources")
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BACKGROUND = os.path.join(REPO, "Background.jpg")
+GLYPH = os.path.join(REPO, "TTS.png")
+RESOURCES = os.path.join(REPO, "MultiplayerTTS", "Resources")
 
-# The drawing is laid out in this square and scaled to whatever is asked for,
-# so the proportions are fixed and only the resolution changes.
-UNIT = 450.0
-INK = (0, 0, 0, 255)
+SUPERSAMPLE = 4
+
+# How much of the tile the glyph spans. The mark is wider than it is tall once
+# its transparent margin is trimmed, so it is fitted to whichever side runs out
+# first and centred in the other.
+GLYPH_SPAN = 0.62
+
+# The rounded frame: how round the corners are, how bright the rim is, and how
+# heavy the darkening at the edges. Same numbers as the other mods in this
+# family, so the tiles sit together in the mods list.
+CORNER = 0.10
+RIM = (255, 255, 255, 46)
+RIM_WIDTH = 0.008
+VIGNETTE = 90
 
 
-def draw_robot(size, supersample=4):
-    """Render the robot at `size` px square, transparent background."""
-    px = int(size * supersample)
-    img = Image.new("RGBA", (px, px), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
+def background(size):
+    """The photograph, cropped square and covering the canvas."""
+    image = Image.open(BACKGROUND).convert("RGBA")
+    side = min(image.size)
+    left = (image.width - side) // 2
+    top = (image.height - side) // 2
+    return image.crop((left, top, left + side, top + side)).resize(
+        (size, size), Image.LANCZOS)
 
-    k = px / UNIT                      # unit -> pixel
-    w = max(1, int(round(5.6 * k)))    # stroke width
 
-    def S(*v):
-        return [x * k for x in v]
+def glyph(size):
+    """TTS.png trimmed to its ink and centred on a transparent canvas."""
+    mark = Image.open(GLYPH).convert("RGBA")
+    box = mark.getbbox()
+    if box is not None:
+        mark = mark.crop(box)
 
-    def rrect(x0, y0, x1, y1, r):
-        d.rounded_rectangle(S(x0, y0, x1, y1), radius=r * k, outline=INK, width=w)
+    span = int(size * GLYPH_SPAN)
+    scale = min(span / float(mark.width), span / float(mark.height))
+    mark = mark.resize((max(1, int(mark.width * scale)),
+                        max(1, int(mark.height * scale))), Image.LANCZOS)
 
-    def ellipse(x0, y0, x1, y1):
-        d.ellipse(S(x0, y0, x1, y1), outline=INK, width=w)
+    layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    layer.paste(mark, ((size - mark.width) // 2, (size - mark.height) // 2))
+    return layer
 
-    def disc(cx, cy, r):
-        d.ellipse(S(cx - r, cy - r, cx + r, cy + r), fill=INK)
 
-    def line(x0, y0, x1, y1):
-        d.line(S(x0, y0, x1, y1), fill=INK, width=w)
+def rounded_mask(size, radius):
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, size - 1, size - 1],
+                                           radius=radius, fill=255)
+    return mask
 
-    def arc(x0, y0, x1, y1, a0, a1):
-        d.arc(S(x0, y0, x1, y1), a0, a1, fill=INK, width=w)
 
-    # ---- antenna ---------------------------------------------------
-    ellipse(214, 44, 236, 68)          # the bulb on top
-    line(225, 68, 225, 86)             # stem down to the head
+def vignette(size, strength):
+    """Darkens the edges, so a white glyph has something to sit against
+    wherever the photograph happens to be pale.
 
-    # ---- head ------------------------------------------------------
-    # Ear tabs first, so the head outline is drawn over their inner edge
-    # and the two read as one piece rather than as boxes stuck on.
-    rrect(151, 99, 175, 127, 4)
-    rrect(275, 99, 299, 127, 4)
+    Drawn small and scaled up rather than drawn at full size: a stack of
+    ellipses is a stack of hard edges, and at icon size those read as rings.
+    Resampling from a sixty-fourth of the canvas turns them into a gradient."""
+    coarse = 64
+    shade = Image.new("L", (coarse, coarse), strength)
+    draw = ImageDraw.Draw(shade)
+    steps = 32
+    # Darkest first and largest first: each ellipse is a little smaller and a
+    # little lighter than the one under it, ending clear in the middle. The
+    # first is bigger than the canvas, or the corners keep the flat fill.
+    for i in range(steps):
+        far = i / float(steps)
+        inset = coarse * (-0.20 + 0.70 * far)
+        draw.ellipse([inset, inset, coarse - 1 - inset, coarse - 1 - inset],
+                     fill=int(strength * (1 - far) ** 1.6))
+    return shade.resize((size, size), Image.BICUBIC)
 
-    rrect(172, 84, 278, 150, 30)       # the head itself
-    rrect(191, 97, 259, 137, 19)       # the visor
 
-    for cx in (212, 238):              # eyes, each with a pupil
-        ellipse(cx - 12, 105, cx + 12, 129)
-        disc(cx, 117, 4.5)
+def build(size):
+    big = size * SUPERSAMPLE
+    canvas = background(big)
 
-    # ---- neck ------------------------------------------------------
-    rrect(209, 150, 241, 172, 3)
+    dark = Image.new("RGBA", (big, big), (0, 8, 20, 255))
+    canvas = Image.composite(dark, canvas, vignette(big, VIGNETTE))
 
-    # ---- shoulders and body ----------------------------------------
-    rrect(151, 176, 172, 200, 4)
-    rrect(278, 176, 299, 200, 4)
+    canvas = Image.alpha_composite(canvas, glyph(big))
 
-    rrect(168, 170, 282, 296, 6)       # torso
-    rrect(190, 206, 262, 248, 21)      # speaker plate
-    for i in range(4):                 # the dots on it
-        disc(206 + i * 12.7, 227, 3.4)
+    frame = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    ImageDraw.Draw(frame).rounded_rectangle(
+        [0, 0, big - 1, big - 1], radius=int(CORNER * big), outline=RIM,
+        width=max(1, int(RIM_WIDTH * big)))
+    canvas = Image.alpha_composite(canvas, frame)
 
-    # ---- arms ------------------------------------------------------
-    # A quarter-circle from just under each shoulder, curving outwards and
-    # down, then a short straight to the wrist. Drawn as an arc rather than
-    # a polyline so the bend has no visible corner.
-    arc(112, 196, 232, 316, 180, 270)   # left upper arm
-    line(112, 256, 112, 268)
-    arc(218, 196, 338, 316, 270, 360)   # right upper arm
-    line(338, 256, 338, 268)
-
-    # ---- hands -----------------------------------------------------
-    # A wrist band and two prongs, angled outwards, which is what reads as a
-    # claw at this size without drawing fingers.
-    for cx, out in ((112, -1), (338, 1)):
-        rrect(cx - 15, 266, cx + 15, 282, 3)
-        line(cx - 11, 282, cx - 11 + out * 6, 300)
-        line(cx + 11, 282, cx + 11 + out * 6, 300)
-        line(cx - 11 + out * 6, 300, cx + 11 + out * 6, 300)
-
-    # ---- hips and legs ---------------------------------------------
-    rrect(174, 296, 276, 316, 3)
-    rrect(182, 316, 214, 356, 3)
-    rrect(236, 316, 268, 356, 3)
-
-    # ---- feet ------------------------------------------------------
-    # Each foot is a wedge that flares away from the centre line: the inner
-    # edge continues the leg straight down, the sole is flat, and the outer
-    # edge rakes back up to the leg's outer corner.
-    def foot(leg_x0, leg_x1, out):
-        inner = leg_x1 if out < 0 else leg_x0     # the edge under the leg
-        outer_top = leg_x0 if out < 0 else leg_x1  # where the rake meets the leg
-        toe = outer_top + out * 20
-
-        line(inner, 356, inner, 390)   # inner edge, straight down from the leg
-        line(inner, 390, toe, 390)     # sole
-        line(toe, 390, outer_top, 356) # rake back up to the leg
-
-    foot(182, 214, -1)
-    foot(236, 268, +1)
-
-    return img.resize((size, size), Image.LANCZOS)
+    canvas.putalpha(rounded_mask(big, int(CORNER * big)))
+    return canvas.resize((size, size), Image.LANCZOS)
 
 
 def main():
-    args = sys.argv[1:]
-    preview = None
-    if "--preview" in args:
-        i = args.index("--preview")
-        preview = args[i + 1]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--preview", action="store_true",
+                        help="also write a 1024px preview beside the icon")
+    args = parser.parse_args()
 
-    os.makedirs(RESOURCES, exist_ok=True)
+    for source in (BACKGROUND, GLYPH):
+        if not os.path.isfile(source):
+            sys.exit("No %s to draw with." % source)
+    if not os.path.isdir(RESOURCES):
+        os.makedirs(RESOURCES)
 
-    icon = draw_robot(256)
-    icon.save(os.path.join(RESOURCES, "icon.png"))
-    print("wrote Resources/icon.png   256x256 RGBA")
+    wanted = [(os.path.join(RESOURCES, "icon.png"), 256)]
+    if args.preview:
+        # Outside Resources, which the mod folder ships whole: a preview is for
+        # looking at while working on this, not for installing.
+        wanted.append((os.path.join(REPO, "icon-preview.png"), 1024))
 
-    thumb = draw_robot(512)
-    thumb.save(os.path.join(RESOURCES, "thumb.png"))
-    print("wrote Resources/thumb.png  512x512 RGBA")
-
-    # The icon is transparent, so it is invisible against a white page and
-    # against a dark one it is invisible the other way. Check it on both.
-    if preview:
-        pad = 24
-        big = draw_robot(320)
-        canvas = Image.new("RGB", (320 * 2 + pad * 3, 320 + pad * 2),
-                           (255, 255, 255))
-        canvas.paste((38, 41, 46), (320 + pad * 2, 0,
-                                    320 * 2 + pad * 3, 320 + pad * 2))
-        canvas.paste(big, (pad, pad), big)
-        canvas.paste(big, (320 + pad * 2, pad), big)
-        canvas.save(preview)
-        print("wrote %s" % preview)
+    for path, size in wanted:
+        build(size).save(path)
+        print("wrote %s (%dpx)" % (path, size))
 
 
 if __name__ == "__main__":

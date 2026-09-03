@@ -140,7 +140,9 @@ public static class PipelineTest
         Check("one run of text", texts == 1, "texts=" + texts);
 
         // [:t 1,500] is how these messages write a rest: 1 Hz is not a tone.
-        Check("a sub-audible tone becomes a rest", rests == 8, "rests=" + rests);
+        // Eleven silences, not four: the seven dialled digits each carry one,
+        // and so does every [:t] -- the tone, the rest and the tone.
+        Check("a sub-audible tone becomes a rest", rests == 11, "rests=" + rests);
 
         // DTMF: '6' is row 770 Hz, column 1477 Hz.
         SpeechPlan dial = DecTalk.Parse("[:dial 6]");
@@ -166,6 +168,150 @@ public static class PipelineTest
                   Math.Abs(ratio - Math.Pow(2.0, 2.0 / 12.0)) < 0.01,
                   "ratio " + ratio.ToString("F4"));
         }
+
+        // The table is anchored, not just relative: index n is MIDI note
+        // n + 35, so 1 is C2. These six are the indices used by the Spooky
+        // Scary Skeletons verse, and the frequencies are the ones a recording
+        // of it measures.
+        int[] indices = new int[] { 11, 13, 14, 16, 18, 19 };
+        double[] hertz = new double[] { 116.54, 130.81, 138.59, 155.56, 174.61, 185.00 };
+        for (int note = 0; note < indices.Length; note++)
+        {
+            SpeechPlan one = DecTalk.Parse("[ah<300," + indices[note] + ">]");
+            double got = one.Items.Count > 0 ? one.Items[0].Pitch : 0.0;
+            Check("pitch index " + indices[note] + " is " + hertz[note] + " Hz",
+                  Math.Abs(got - hertz[note]) < 0.5, got.ToString("F2"));
+        }
+
+        // ---- speaker definitions -------------------------------------
+        // The published DECtalk table, spot-checked where an earlier
+        // hand-tuned version of it was wrong.
+        KlattVoice paul = new KlattVoice();
+        DecTalkVoices.Apply(paul, "paul");
+        Check("Paul is ap 122, pr 100",
+              paul.Pitch == 122.0 && paul.PitchRange == 100.0,
+              paul.Pitch + "/" + paul.PitchRange);
+
+        // ap is the baseline, not the mean of the rendered contour. Harry
+        // measures around 105 Hz and his ap is 89; reading the measurement as
+        // ap is what put this table out.
+        KlattVoice harry = new KlattVoice();
+        DecTalkVoices.Apply(harry, "harry");
+        Check("Harry is ap 89, pr 80, hs 115",
+              harry.Pitch == 89.0 && harry.PitchRange == 80.0
+              && Math.Abs(harry.HeadSize - 1.15) < 0.001,
+              harry.Pitch + "/" + harry.PitchRange + "/" + harry.HeadSize);
+
+        // Rita is a low voice -- below Dennis. Assuming otherwise put her at 196.
+        KlattVoice rita = new KlattVoice();
+        DecTalkVoices.Apply(rita, "rita");
+        Check("Rita is a low voice at ap 106", rita.Pitch == 106.0, rita.Pitch.ToString());
+
+        // The female voices are not small-headed; they are formant-shifted.
+        KlattVoice bettyVoice = new KlattVoice();
+        DecTalkVoices.Apply(bettyVoice, "betty");
+        Check("Betty has an average head and a switched-off fifth formant",
+              Math.Abs(bettyVoice.HeadSize - 1.0) < 0.001 && bettyVoice.F4 == 4450.0
+              && bettyVoice.B5 == 2048.0 && bettyVoice.Sex == 0,
+              bettyVoice.HeadSize + "/" + bettyVoice.F4 + "/" + bettyVoice.B5);
+
+        // Breathiness is in dB over 0..70 and is a main character trait.
+        KlattVoice wendy = new KlattVoice();
+        DecTalkVoices.Apply(wendy, "wendy");
+        Check("Wendy is breathy at 55 dB", wendy.Breathiness == 55.0,
+              wendy.Breathiness.ToString());
+
+        // [:nv] is the user-defined slot, which starts as a copy of Paul.
+        KlattVoice val = new KlattVoice();
+        DecTalkVoices.Apply(val, "val");
+        Check("Val starts as a copy of Paul",
+              val.Pitch == paul.Pitch && val.PitchRange == paul.PitchRange,
+              val.Pitch.ToString());
+
+        // ---- the voice designer --------------------------------------
+        SpeechPlan dv = DecTalk.Parse("[:nh][:dv ap 90 pr 0] I am a robot.");
+        Check("[:dv] edits reach the item",
+              dv.Items.Count > 0 && dv.Items[0].Design != null
+              && dv.Items[0].Design["ap"] == 90.0
+              && dv.Items[0].Design["pr"] == 0.0,
+              dv.Items.Count > 0 && dv.Items[0].Design != null
+                  ? dv.Items[0].Design.Count.ToString() : "none");
+
+        // Zero is a real pitch range -- it is DECtalk's own monotone example --
+        // so it must survive as a value and not be read as "unset".
+        SpeechPlan mono = DecTalk.Parse("[:dv pr 0]hello");
+        Check("a pitch range of zero is kept",
+              mono.Items.Count > 0 && mono.Items[0].Design != null
+              && mono.Items[0].Design.ContainsKey("pr")
+              && mono.Items[0].Design["pr"] == 0.0,
+              "none");
+
+        // Selecting a speaker drops the edits: DECtalk keeps them only "while
+        // the current speaker remains current".
+        SpeechPlan reset = DecTalk.Parse("[:dv ap 90]one[:np]two");
+        SpeechItem second = null;
+        for (int m = reset.Items.Count - 1; m >= 0; m--)
+        {
+            if (reset.Items[m].Kind == SpeechItem.KindText) { second = reset.Items[m]; break; }
+        }
+        Check("selecting a speaker clears [:dv] edits",
+              second != null && second.Design == null,
+              second == null ? "no item" : "still set");
+
+        // An option that is not DECtalk's is skipped, not guessed at.
+        SpeechPlan junk = DecTalk.Parse("[:dv zz 5 ap 100]hi");
+        Check("[:dv] ignores unknown options",
+              junk.Items.Count > 0 && junk.Items[0].Design != null
+              && junk.Items[0].Design.Count == 1
+              && junk.Items[0].Design["ap"] == 100.0,
+              junk.Items.Count > 0 && junk.Items[0].Design != null
+                  ? junk.Items[0].Design.Count.ToString() : "none");
+
+        // "_" carries a note into the words after it: this is how a copypasta
+        // sings ordinary text instead of spelling it out as phonemes.
+        SpeechPlan marked = DecTalk.Parse("[_<1,29>]I throw my hoe[_<1,27>]zez");
+        int sung = 0;
+        double firstNote = 0.0, secondNote = 0.0;
+        for (int m = 0; m < marked.Items.Count; m++)
+        {
+            if (marked.Items[m].Kind != SpeechItem.KindText) continue;
+            sung++;
+            if (sung == 1) firstNote = marked.Items[m].Pitch;
+            if (sung == 2) secondNote = marked.Items[m].Pitch;
+        }
+        // Index 29 is MIDI 64 (E4) and 27 is MIDI 62 (D4).
+        Check("a marker sings the words after it",
+              sung == 2
+              && Math.Abs(firstNote - 329.63) < 0.5
+              && Math.Abs(secondNote - 293.66) < 0.5,
+              firstNote.ToString("F1") + "/" + secondNote.ToString("F1"));
+
+        // The same phoneme with a real length is a rest, not a marker.
+        SpeechPlan rest = DecTalk.Parse("[_<500,22>]");
+        Check("a held underscore is a rest",
+              rest.Items.Count == 1
+              && rest.Items[0].Kind == SpeechItem.KindSilence
+              && Math.Abs(rest.Items[0].Duration - 500.0) < 0.5,
+              rest.Items.Count > 0 ? rest.Items[0].Duration.ToString() : "none");
+
+        // A message with no marker in it must be left entirely alone.
+        SpeechPlan spoken = DecTalk.Parse("hello there");
+        Check("plain text carries no note",
+              spoken.Items.Count == 1 && spoken.Items[0].Pitch == 0.0,
+              spoken.Items.Count > 0 ? spoken.Items[0].Pitch.ToString() : "none");
+
+        // DECtalk's own spellings have to resolve, because an unknown one is
+        // not approximated -- it is dropped. "ur" used to leave a bare R, so
+        // "your" was sung as a growl.
+        SpeechPlan spelt = DecTalk.Parse("[nyur<300,18>]");
+        Check("DECtalk spellings resolve to a phone",
+              spelt.Items.Count == 3
+              && spelt.Items[0].Phoneme == "N"
+              && spelt.Items[1].Phoneme == "Y"
+              && spelt.Items[2].Phoneme == "UR"
+              && Phonemes.Get("UR").Name == "ER"
+              && Math.Abs(spelt.Items[2].Duration - 300.0) < 0.5,
+              spelt.Items.Count > 2 ? spelt.Items[2].Phoneme : "none");
 
         // Longest-first matching: "ng" must not be read as "n" then "g".
         SpeechPlan ng = DecTalk.Parse("[ng]");
@@ -205,6 +351,72 @@ public static class PipelineTest
         for (int i = 0; i < capped.Items.Count; i++) total += capped.Items[i].Duration;
         Check("total length is capped", total <= DecTalk.MaxTotalMs + 1.0,
               total + " ms");
+
+        // Voice changes are per item, not per message. The trailing [:np] in
+        // the copypastas must not repaint every earlier line in Paul's voice.
+        SpeechPlan twoHander = DecTalk.Parse("[:nh]why? [:nv]because[:np]");
+        int hh = 0, vv = 0, pp = 0;
+        for (int i = 0; i < twoHander.Items.Count; i++)
+        {
+            string v = twoHander.Items[i].Voice;
+            if (v == "harry") hh++;
+            else if (v == "val") vv++;
+            else if (v == "paul") pp++;
+        }
+        Check("each line keeps the voice it was written in",
+              hh == 1 && vv == 1 && pp == 0,
+              "harry=" + hh + " val=" + vv + " paul=" + pp);
+
+        // DECtalk does not require a space before the argument, and the
+        // copypastas are written without one.
+        SpeechPlan tight = DecTalk.Parse("[:dial67589340]");
+        int tightTones = 0;
+        for (int i = 0; i < tight.Items.Count; i++)
+        {
+            if (tight.Items[i].Kind == SpeechItem.KindTone) tightTones++;
+        }
+        Check("[:dial67589340] with no space still dials", tightTones == 8,
+              "tones=" + tightTones);
+
+        SpeechPlan tightTone = DecTalk.Parse("[:t350,500]");
+        Check("[:t350,500] with no space still sounds",
+              tightTone.Items.Count == 2
+              && tightTone.Items[0].Kind == SpeechItem.KindTone
+              && Math.Abs(tightTone.Items[0].Frequency - 350.0) < 0.5,
+              tightTone.Items.Count.ToString());
+
+        // A tune has to come out as separate notes. DECtalk leaves a fixed
+        // gap after every tone whatever the tone's own length, and without it
+        // the Tetris theme is one continuous glissando.
+        SpeechPlan tune = DecTalk.Parse("[:t 430,500][:t 320,250]");
+        Check("every tone is followed by DECtalk's gap",
+              tune.Items.Count == 4
+              && tune.Items[0].Kind == SpeechItem.KindTone
+              && tune.Items[1].Kind == SpeechItem.KindSilence
+              && tune.Items[2].Kind == SpeechItem.KindTone
+              && tune.Items[3].Kind == SpeechItem.KindSilence
+              && Math.Abs(tune.Items[1].Duration - DecTalk.ToneGapMs) < 0.01
+              && Math.Abs(tune.Items[3].Duration - DecTalk.ToneGapMs) < 0.01,
+              tune.Items.Count.ToString());
+
+        // ... but a command whose name really does end in digits must not be
+        // chopped up to make one.
+        SpeechPlan notACommand = DecTalk.Parse("[:nonsense123]hello");
+        int emitted = 0;
+        for (int i = 0; i < notACommand.Items.Count; i++)
+        {
+            if (notACommand.Items[i].Kind != SpeechItem.KindText) emitted++;
+        }
+        Check("an unknown command with digits emits nothing", emitted == 0,
+              "emitted=" + emitted);
+
+        // DTMF timing, measured off real DECtalk: 100 ms on, 100 ms off.
+        SpeechPlan timing = DecTalk.Parse("[:dial12]");
+        Check("dialled digits are 100 ms on, 100 ms off",
+              timing.Items.Count == 4
+              && Math.Abs(timing.Items[0].Duration - 100.0) < 0.5
+              && Math.Abs(timing.Items[1].Duration - 100.0) < 0.5,
+              timing.Items.Count + " items");
 
         // An unclosed bracket is text, not a swallowed rest of message.
         SpeechPlan broken = DecTalk.Parse("hello [:t 350");
@@ -341,8 +553,13 @@ public static class PipelineTest
             Check(label + " is finite", finite, "");
             Check(label + " is audible", peak > 0.02, "peak " + peak.ToString("F4"));
             Check(label + " does not clip", peak <= 1.0, "peak " + peak.ToString("F4"));
+            // Levelled to sit alongside the Music mod's instrument blocks,
+            // which run near full scale. The knee is what allows an RMS this
+            // high without the peak going over.
             Check(label + " is levelled",
-                  rms > 0.01 && rms < 0.35, "rms " + rms.ToString("F4"));
+                  rms > 0.12 && rms < 0.35, "rms " + rms.ToString("F4"));
+            Check(label + " peaks near full scale",
+                  peak > 0.5, "peak " + peak.ToString("F4"));
         }
 
         // Level consistency is the point of the normalisation pass: two

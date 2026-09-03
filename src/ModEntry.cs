@@ -171,18 +171,18 @@ namespace MultiplayerTTS
                     }
                     else
                     {
-                        if (first < 10f || first > 300f)
+                        if (first < TtsSettings.RangeMin
+                            || first > TtsSettings.RangeMax)
                         {
-                            Say("range must be between 10 and 300 metres.");
+                            Say("range must be between " + TtsSettings.RangeMin
+                                + " and " + TtsSettings.RangeMax + " metres.");
                             return;
                         }
-                        s.MaxDistance = first;
-                        s.ReferenceDistance = Mathf.Max(1f, first * (8f / 90f));
+                        s.SetRange(first);
                     }
 
                     s.Save();
-                    Say("full volume within " + s.ReferenceDistance
-                        + "m, silent past " + s.MaxDistance + "m.");
+                    Say(s.DescribeRange() + ".");
                     return;
                 }
 
@@ -282,8 +282,7 @@ namespace MultiplayerTTS
                          + "  volume " + Pct(s.Volume)
                          + "  speed " + ((int)(s.Speed * 100f)) + "%"
                          + "  spatial " + Pct(s.Spatialisation));
-            b.AppendLine("  full volume within " + s.ReferenceDistance
-                         + "m, silent past " + s.MaxDistance + "m");
+            b.AppendLine("  " + s.DescribeRange());
             b.AppendLine("  own messages: "
                          + (s.OwnVolume <= 0.0001f ? "not spoken" : Pct(s.OwnVolume))
                          + "   scope: " + (s.SpeakTeamOnly ? "own team" : "everyone"));

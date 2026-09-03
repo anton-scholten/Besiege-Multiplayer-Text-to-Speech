@@ -158,6 +158,32 @@ namespace MultiplayerTTS.Klatt
             // one segment with a long noisy tail.
             Add(new Phone("CH", ClassAffricate, 300, 1800, 2480, 200, 150, 200, 100, 0.0, 0.75, 0.15, 2600, 800, false));
             Add(new Phone("JH", ClassAffricate, 300, 1800, 2480, 120, 150, 200, 85, 0.40, 0.42, 0.0, 2600, 800, true));
+
+            // DECtalk's own spellings for phones this table already has.
+            //
+            // These are not conveniences. The parser matches the longest
+            // prefix it knows and skips any character it cannot place, so a
+            // spelling that is missing here does not fall back to something
+            // near it -- it silently loses a phone. "ur" came out as a bare
+            // R, which is why "shivers down your spine" sang "your" as a
+            // growl; "hx", and a plain "h", vanished outright.
+            Alias("RR", "ER");     // DECtalk's spelling of the vowel in "bird"
+            Alias("UR", "ER");     // what the copypastas write for the same
+            Alias("AXR", "ER");    // its unstressed form
+            Alias("HX", "HH");
+            Alias("H", "HH");
+            Alias("IX", "IH");     // the reduced "i" of "roses"
+            Alias("YX", "Y");
+        }
+
+        /// <summary>
+        /// Give an existing phone a second spelling. The alias is reachable
+        /// through <see cref="Get"/> and <see cref="Has"/> but is deliberately
+        /// kept out of <c>all</c>, which is the list of distinct phones.
+        /// </summary>
+        private static void Alias(string name, string existing)
+        {
+            byName[name] = byName[existing];
         }
 
         private static Phone Add(Phone p)

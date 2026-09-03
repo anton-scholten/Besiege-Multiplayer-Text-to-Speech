@@ -49,6 +49,35 @@ namespace MultiplayerTTS
         /// <summary>How much of the sound is positional. 0 is flat 2D.</summary>
         public float Spatialisation = 1.0f;
 
+        /// <summary>
+        /// Both distances from one number, keeping the falloff shape the
+        /// defaults above describe.
+        ///
+        /// Range is a single control everywhere the player meets it -- the
+        /// panel's slider and <c>tts range</c> -- because it describes the
+        /// listener's own hearing rather than any one speaker's voice. This
+        /// lives here so the two callers cannot drift apart on what the ratio
+        /// is; <c>tts range &lt;near&gt; &lt;far&gt;</c> is the way to set the
+        /// two independently.
+        /// </summary>
+        public void SetRange(float metres)
+        {
+            MaxDistance = Mathf.Clamp(metres, RangeMin, RangeMax);
+            ReferenceDistance =
+                Mathf.Max(1f, MaxDistance * (8f / 90f));
+        }
+
+        /// <summary>The range a slider or a bare <c>tts range</c> may ask for.</summary>
+        public const float RangeMin = 10f;
+        public const float RangeMax = 300f;
+
+        /// <summary>How the two distances read in the console and the log.</summary>
+        public string DescribeRange()
+        {
+            return "full volume within " + ReferenceDistance
+                 + "m, silent past " + MaxDistance + "m";
+        }
+
         private readonly Dictionary<string, float> perPlayer =
             new Dictionary<string, float>();
 

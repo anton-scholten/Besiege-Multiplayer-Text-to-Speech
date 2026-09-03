@@ -36,8 +36,14 @@ namespace MultiplayerTTS
             v.HeadSize = 1.0 + 0.13 * Slice(h, 8, 8) - 0.10 * sizeBias;
 
             v.Speed = 0.92 + Slice(h, 16, 6) * 0.20;
-            v.PitchRange = 0.75 + Slice(h, 22, 6) * 0.65;
-            v.Breathiness = 0.02 + Slice(h, 28, 4) * 0.06;
+            // pr and br are DECtalk's own units now: a percentage and
+            // decibels, not the 0..1 multipliers this used to mix. The spreads
+            // are taken from the range the nine built-in voices actually
+            // cover -- pr from Harry's 80 to Betty's 240, br from Paul's 0 to
+            // Wendy's 55 -- so a generated voice sounds like it could have
+            // been one of them.
+            v.PitchRange = 80.0 + Slice(h, 22, 6) * 160.0;
+            v.Breathiness = Slice(h, 28, 4) * 55.0;
 
             if (settings != null) v.Speed *= settings.Speed;
 
@@ -45,32 +51,16 @@ namespace MultiplayerTTS
         }
 
         /// <summary>
-        /// Apply one of DECtalk's named voices, as selected by <c>[:name paul]</c>
-        /// or its shorthand <c>[:np]</c>.
+        /// Apply one of DECtalk's named voices, as selected by
+        /// <c>[:name paul]</c> or its shorthand <c>[:np]</c>.
         ///
-        /// These are approximations, not the originals: the real voices are
-        /// full parameter sets, and what is reproduced here is the part a
-        /// listener actually identifies them by -- roughly where the pitch
-        /// sits, how big the speaker sounds, and how breathy they are.
+        /// The table itself lives in <see cref="MultiplayerTTS.Klatt.DecTalkVoices"/>,
+        /// with the rest of the DECtalk handling and, more to the point, on the
+        /// Unity-free side of the mod so the offline tests can reach it.
         /// </summary>
         public static void ApplyNamedVoice(KlattVoice v, string name)
         {
-            if (v == null || string.IsNullOrEmpty(name)) return;
-
-            switch (name.Trim().ToLowerInvariant())
-            {
-                case "paul":   v.Pitch = 122; v.HeadSize = 1.00; v.Breathiness = 0.03; break;
-                case "harry":  v.Pitch = 89;  v.HeadSize = 1.12; v.Breathiness = 0.03; break;
-                case "frank":  v.Pitch = 105; v.HeadSize = 1.06; v.Breathiness = 0.10; break;
-                case "dennis": v.Pitch = 110; v.HeadSize = 1.04; v.Breathiness = 0.05; break;
-                case "betty":  v.Pitch = 208; v.HeadSize = 0.86; v.Breathiness = 0.05; break;
-                case "ursula": v.Pitch = 240; v.HeadSize = 0.82; v.Breathiness = 0.04; break;
-                case "rita":   v.Pitch = 196; v.HeadSize = 0.88; v.Breathiness = 0.08; break;
-                case "wendy":  v.Pitch = 200; v.HeadSize = 0.85; v.Breathiness = 0.12; break;
-                case "kit":    v.Pitch = 306; v.HeadSize = 0.72; v.Breathiness = 0.04; break;
-                case "val":    v.Pitch = 190; v.HeadSize = 0.90; v.Breathiness = 0.06; break;
-                default: return;
-            }
+            DecTalkVoices.Apply(v, name);
         }
 
         /// <summary>

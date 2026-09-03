@@ -150,21 +150,19 @@ namespace MultiplayerTTS
         }
 
         /// <summary>
-        /// Fold a parsed message's own [:rate], [:pitch], [:volume] and
-        /// [:name] into the speaker's voice.
+        /// Fold a parsed message's own [:pitch] and [:volume] into the
+        /// speaker's voice.
         ///
-        /// These modify the player's own voice rather than replacing it, so a
-        /// message that only sets the rate still sounds like the person who
-        /// sent it. DECtalk's default rate is 200 wpm, so that is the point
-        /// at which the speed is unchanged.
+        /// Voice and rate are deliberately *not* applied here: they are
+        /// per-item, because a message can change speaker part way through,
+        /// and the synthesiser reads them off each item as it goes. Applying
+        /// them here as well would fold the last one in the message over the
+        /// whole of it.
         /// </summary>
         private static void ApplyPlanVoice(KlattVoice voice, SpeechPlan plan)
         {
             if (voice == null || plan == null) return;
 
-            VoiceBank.ApplyNamedVoice(voice, plan.Voice);
-
-            voice.Speed *= Mathf.Clamp((float)(plan.RateWpm / 200.0), 0.4f, 3f);
             voice.Gain *= Mathf.Clamp01((float)plan.Volume);
 
             if (plan.PitchOffset != 0.0)

@@ -137,6 +137,26 @@ namespace MultiplayerTTS.Ui
             }
         }
 
+        /// <summary>
+        /// UI Factory's own full-screen canvas, and the right parent for a
+        /// Window.
+        ///
+        /// A Window must not be parented into Besiege's own UI. Its viewport
+        /// clips with a stencil <c>Mask</c>, and so does the chat window's
+        /// message list; two masks at the same depth under one parent are
+        /// assigned the same stencil bit and cut holes in each other. The
+        /// visible result is the chat's own text escaping its viewport and
+        /// drawing across the panel.
+        /// </summary>
+        public static Canvas ScreenCanvas
+        {
+            get
+            {
+                try { return Besiege.UI.Make.ScreenCanvas; }
+                catch (Exception) { return null; }
+            }
+        }
+
         /// <summary>UI Factory's own font, which its prefabs expect.</summary>
         public static Font Font
         {
@@ -173,27 +193,52 @@ namespace MultiplayerTTS.Ui
         }
 
         /// <summary>
-        /// Point a control's hover animation at a child instead of at the
-        /// control itself.
+        /// Switch off a control's own hover swell.
         ///
-        /// UI Factory's controls swell on hover, which is right for a button
-        /// and wrong for a full-width row — a whole settings line growing
-        /// under the pointer reads as a glitch. The scale factors are
-        /// non-public and serialised into the prefab, and reflection is
-        /// blacklisted, so they cannot be read or written; <c>Target</c> is
-        /// public, so the animation can be aimed somewhere harmless instead.
+        /// UI Factory's controls grow the <b>whole control</b> under the
+        /// pointer, which is right for a button and wrong for a full-width
+        /// settings row -- the row's words are carried out of the window. The
+        /// Music mod does the same thing for the same reason, and then grows
+        /// only the lettering with its own <see cref="Swell"/>.
         /// </summary>
-        public static void RetargetHover(GameObject control, RectTransform target)
+        public static void NoSwell(GameObject control)
         {
             if (control == null) return;
             try
             {
-                Besiege.UI.Bridge.ScaleAnimation animation =
+                Besiege.UI.Bridge.ScaleAnimation scale =
                     control.GetComponent<Besiege.UI.Bridge.ScaleAnimation>();
-                if (animation != null) animation.Target = target;
+                if (scale != null) scale.enabled = false;
             }
             catch (Exception)
             {
+                // A UI Factory that will not resolve has put no animation on
+                // the object either.
+            }
+        }
+
+        /// <summary>
+        /// Give a label a font if it has none. A <c>Text</c> with no font draws
+        /// nothing at all.
+        /// </summary>
+        public static void EnsureFont(Text label)
+        {
+            if (label == null || label.font != null) return;
+            Font font = Font;
+            if (font != null) label.font = font;
+        }
+
+        /// <summary>
+        /// The game's own panel black, read from <c>Besiege.UI.Consts</c>
+        /// rather than copied as a literal, so a reskin of the game reaches
+        /// this panel too. Falls back to the value it has today.
+        /// </summary>
+        public static Color PanelBlack
+        {
+            get
+            {
+                try { return Besiege.UI.Consts.C_BG_BLACK; }
+                catch (Exception) { return new Color(0.03f, 0.03f, 0.044f, 0.2f); }
             }
         }
 

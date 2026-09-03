@@ -2,7 +2,7 @@
 
 	<!-- General information about the mod. -->
 	<Name>Multiplayer Text to Speech</Name>
-	<Author>ahscholt</Author>
+	<Author>wizz6rd</Author>
 	<Version>1.0.0</Version>
 
 	<Description>
@@ -48,7 +48,11 @@ still reachable from the "tts" console command.
 		<Assembly path="MultiplayerTTS.dll" />
 	</Assemblies>
 
-	<!-- Drawn by tools/make_icon.py: a line-art robot, black on transparency.
+	<!-- Both images are the same page-and-speaker mark over the same
+	     background. The icon is composed by tools/make_icon.py at 256px, which
+	     is the size the mods list draws it at. The thumbnail is Thumbnail.png
+	     from the repository root, drawn by hand in Thumbnail.xcf, and is the
+	     only one of the two ever seen large enough to carry lettering.
 
 	     These paths are relative to the mod's Resources/ folder, NOT to the
 	     mod root: ModPaths appends "Resources" before combining. Writing
@@ -62,7 +66,7 @@ still reachable from the "tts" console command.
 	     and the files on disk have to match exactly. -->
 	<Resources>
 		<Texture name="mptts-icon" path="icon.png" />
-		<Texture name="mptts-thumb" path="thumb.png" />
+		<Texture name="mptts-thumb" path="Thumbnail.png" />
 	</Resources>
 
 

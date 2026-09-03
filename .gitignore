@@ -1,0 +1,8 @@
+# Reference recordings used to tune the synthesiser against real DECtalk. They
+# are other people's audio and are only needed while measuring, so they stay out
+# of the repository -- tools/say.sh renders our own side of the comparison.
+*.wav
+
+# Build scratch and Python bytecode.
+tools/__pycache__/
+*.pyc

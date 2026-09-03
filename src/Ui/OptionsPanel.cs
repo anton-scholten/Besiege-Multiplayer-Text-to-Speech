@@ -29,7 +29,19 @@ namespace MultiplayerTTS.Ui
         public TtsManager Manager;
 
         public const float Width = 330f;
-        public const float Height = 470f;
+
+        /// <summary>The Window prefab's title bar, which the scroll view sits under.</summary>
+        private const float TopBarHeight = 50f;
+
+        /// <summary>
+        /// Bounds on the window's height. Within these it is sized to fit its
+        /// contents, because the Window prefab's background is translucent and
+        /// its Blur shows the game through it: any part of the window the rows
+        /// do not reach is a pane of blurred scenery, which reads as the panel
+        /// leaking rather than as an empty panel.
+        /// </summary>
+        private const float MinHeight = 180f;
+        private const float MaxHeight = 560f;
 
         /// <summary>
         /// How far left of the chat window the window's right edge sits, which
@@ -41,25 +53,48 @@ namespace MultiplayerTTS.Ui
         private const float LabelWidth = 116f;
         private const float FieldWidth = 52f;
         private const float MuteWidth = 46f;
+
+        /// <summary>
+        /// How many frames Besiege's hotkeys stay stopped after a value box
+        /// loses focus. Two would do -- see <c>HoldHotkeys</c> for why one is
+        /// not enough -- and three costs nothing.
+        /// </summary>
+        private const int HotkeyHoldFrames = 3;
         private const float PlayerNameWidth = 84f;
         private const float PlayerFieldWidth = 42f;
         private const float Pad = 10f;
 
-        private const float SpeedMin = 0.5f;
-        private const float SpeedMax = 2.0f;
-        private const float RangeMin = 10f;
-        private const float RangeMax = 300f;
+        /// <summary>
+        /// Lettering size on a toggle. The prefab's own is small for a row read
+        /// at a glance; this matches the value boxes, as the Music mod's panels
+        /// do.
+        /// </summary>
+        private const int ToggleFont = 16;
 
         /// <summary>
-        /// The distance at which a voice is still at full volume, as a fraction
-        /// of the distance at which it becomes inaudible. Kept proportional so
-        /// range is one control: the falloff keeps its shape and only its scale
-        /// moves, which is what "range" means to the person dragging it.
+        /// How opaque the window's own plate is, standing in for the blur that
+        /// is switched off above.
         /// </summary>
-        private const float ReferenceFraction = 8f / 90f;
+        private const float BackdropAlpha = 0.93f;
+
+        private const float SpeedMin = 0.5f;
+        private const float SpeedMax = 2.0f;
+
+        // Range's own limits, and the coupling between the two distances behind
+        // it, live in TtsSettings so this panel and `tts range` cannot drift
+        // apart on either. See TtsSettings.SetRange.
+        private const float RangeMin = TtsSettings.RangeMin;
+        private const float RangeMax = TtsSettings.RangeMax;
 
         private RectTransform content;
         private RectTransform playersHeader;
+        private RectTransform windowRect;
+
+        /// <summary>
+        /// The Window itself, which is what has to be positioned. The object
+        /// this component lives on is only a container for it.
+        /// </summary>
+        public RectTransform Window { get { return windowRect; } }
 
         private Row master, own, speed, spatial, range;
         private Toggle enabledToggle;
@@ -74,6 +109,10 @@ namespace MultiplayerTTS.Ui
         // back -- which, with a clamp in between, is how a setting drifts a
         // little every time a panel opens.
         private bool binding;
+
+        // The hotkey hold, and how many frames of it are left. See HoldHotkeys.
+        private bool holdingHotkeys;
+        private int hotkeyHold;
 
         private class Row
         {
@@ -96,24 +135,75 @@ namespace MultiplayerTTS.Ui
         // ---------------------------------------------------------------
 
         /// <summary>
-        /// Build the window under <paramref name="parent"/>. Returns false if
-        /// UI Factory would not give us its prefabs.
+        /// Spawn the window under <paramref name="parent"/> and put an
+        /// OptionsPanel on it. Returns null if UI Factory will not give us the
+        /// prefab.
+        ///
+        /// The component goes on the Window itself rather than on a wrapper
+        /// object. A wrapper is the obvious arrangement and it broke both
+        /// dragging and placement: a bare <c>new GameObject</c> has a
+        /// zero-sized RectTransform, so everything that measured the window
+        /// against its parent -- the on-screen clamp especially -- was
+        /// measuring against a 0x0 rect, decided the window could never fit,
+        /// and pinned it to a corner every frame.
         /// </summary>
-        public bool Build(Transform parent)
+        public static OptionsPanel Create(Transform parent, TtsManager manager)
         {
             GameObject window = UIF.Spawn(UIF.WindowPrefab, parent);
-            if (window == null) return false;
+            if (window == null) return null;
 
-            window.transform.SetParent(transform, false);
+            window.name = "MpTtsOptions";
 
+            OptionsPanel panel = window.AddComponent<OptionsPanel>();
+            panel.Manager = manager;
+            if (!panel.Build(window)) { Destroy(window); return null; }
+            return panel;
+        }
+
+        private bool Build(GameObject window)
+        {
             // Do NOT add a Drag or a StopsZoomWhenHovered of our own: the
             // Window prefab already carries both.
-            RectTransform rect = UIF.Rect(window);
-            rect.anchorMin = new Vector2(0f, 0f);
-            rect.anchorMax = new Vector2(0f, 0f);
-            rect.pivot = new Vector2(1f, 0f);
-            rect.anchoredPosition = new Vector2(-RightOffset, 0f);
-            rect.sizeDelta = new Vector2(Width, Height);
+            // Sized here; ChatDock.Follow does the positioning, because where
+            // it goes depends on the chat window and this does not know about
+            // that.
+            windowRect = UIF.Rect(window);
+            windowRect.sizeDelta = new Vector2(Width, MinHeight);
+
+            // ---- the backdrop ---------------------------------------------
+            //
+            // The Window prefab's frosting is switched off here, and the plate
+            // behind it made opaque instead.
+            //
+            // That frosting is an Image running Besiege's own
+            // "Custom/TooltipBlur (Larger)" shader, which samples the frame
+            // behind it. It is built for a tooltip: something small and
+            // short-lived on Besiege's own canvas. On a large window on a
+            // canvas of its own, with its own sorting order, what it grabs is
+            // not the composition it assumes, and it draws a displaced copy of
+            // other things on screen -- the chat's buttons inside the panel,
+            // and pieces of the panel's own title outside it. The shader is the
+            // game's, and a mod cannot patch it.
+            //
+            // Switching it off is not a workaround around the edge of the API:
+            // BlurHandler already enables and disables exactly this Image every
+            // frame from Besiege's own blur graphics option, so a UI Factory
+            // window with no blur is a state the game ships. It has to be the
+            // GameObject rather than the Image, because that same Update would
+            // switch the Image straight back on.
+            Transform blur = window.transform.Find("Blur");
+            if (blur != null) blur.gameObject.SetActive(false);
+
+            // With nothing frosted behind it the prefab's own near-transparent
+            // plate would leave the panel unreadable over a bright level, so it
+            // is the game's panel colour at an alpha that stands on its own.
+            Image background = window.GetComponent<Image>();
+            if (background != null)
+            {
+                Color panel = UIF.PanelBlack;
+                panel.a = BackdropAlpha;
+                background.color = panel;
+            }
 
             Transform topBar = window.transform.Find("TopBar");
             if (topBar != null)
@@ -159,6 +249,7 @@ namespace MultiplayerTTS.Ui
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             BuildRows();
+            FitToContent();
 
             gameObject.SetActive(false);
             return true;
@@ -183,6 +274,28 @@ namespace MultiplayerTTS.Ui
             RefreshPlayers(true);
         }
 
+        /// <summary>
+        /// Shrink or grow the window to exactly what the rows need.
+        ///
+        /// The vertical layout group sizes the scroll view's *content*, not the
+        /// window, so without this the window keeps whatever height it was
+        /// given and the surplus shows the game through the prefab's
+        /// translucent background and blur. Beyond MaxHeight the scroll view
+        /// takes over, which is what it is there for.
+        /// </summary>
+        private void FitToContent()
+        {
+            if (content == null || windowRect == null) return;
+
+            LayoutRebuilder.ForceRebuildLayoutImmediate(content);
+
+            float needed = LayoutUtility.GetPreferredHeight(content) + TopBarHeight;
+            float height = Mathf.Clamp(needed, MinHeight, MaxHeight);
+
+            if (Mathf.Abs(windowRect.sizeDelta.y - height) < 0.5f) return;
+            windowRect.sizeDelta = new Vector2(Width, height);
+        }
+
         private RectTransform BuildHeader(string caption)
         {
             GameObject go = UIF.Spawn(UIF.TextPrefab, content);
@@ -202,15 +315,24 @@ namespace MultiplayerTTS.Ui
             GameObject go = UIF.Spawn(UIF.TextToggle, content);
             if (go == null) return null;
 
-            UIF.Caption(go, caption);
+            Text label = UIF.Caption(go, caption);
             AddHeight(UIF.Rect(go), RowHeight);
 
-            // The hover swell is right for a button and wrong for a full-width
-            // row, so it is aimed at the checkmark instead of at the whole row.
-            Transform check = go.transform.Find("Checkmark");
-            if (check != null)
+            // Styled the way the Music mod styles the toggles in its block
+            // panels, so the two mods' menus match: the prefab's own swell off,
+            // the lettering at the same size as the value boxes rather than the
+            // prefab's smaller default, and only the lettering growing under
+            // the pointer.
+            UIF.NoSwell(go);
+            if (label != null)
             {
-                UIF.RetargetHover(go, check.GetComponent<RectTransform>());
+                label.fontSize = ToggleFont;
+                label.resizeTextForBestFit = false;
+                UIF.EnsureFont(label);
+
+                Swell swell = go.AddComponent<Swell>();
+                swell.grows = label.transform;
+                swell.grown = 1.15f;
             }
 
             Toggle toggle = go.GetComponent<Toggle>();
@@ -219,15 +341,21 @@ namespace MultiplayerTTS.Ui
         }
 
         /// <summary>
-        /// A label, a slider and a typeable value box on one line.
+        /// A label, a slider and a typeable value box on one line: the shape
+        /// every row in the panel has, whether it is a setting or a player.
         ///
         /// The slider is UI Factory's prefab, which is already the style
         /// Besiege uses in its own settings: a uniform track with no coloured
-        /// fill, and a round handle.
+        /// fill, and a round handle. It always runs 0..1 and the caller maps
+        /// that onto whatever the setting's own units are, so a row knows
+        /// nothing about what it is showing.
+        ///
+        /// The two callers differ only in their widths and in what they hang
+        /// off the result -- a player row also gets a mute button in the gap
+        /// <paramref name="fieldInset"/> leaves for it.
         /// </summary>
-        private Row BuildRow(string caption,
-                             UnityEngine.Events.UnityAction<float> onChanged,
-                             UnityEngine.Events.UnityAction<string> onTyped)
+        private Row NewRow(string caption, float labelWidth, float fieldInset,
+                           float fieldWidth, float sliderRight, int digits)
         {
             Row row = new Row();
 
@@ -239,13 +367,12 @@ namespace MultiplayerTTS.Ui
             GameObject label = UIF.Spawn(UIF.TextPrefab, row.Root);
             row.Label = UIF.Caption(label, caption);
             if (row.Label != null) row.Label.alignment = TextAnchor.MiddleLeft;
-            Left(UIF.Rect(label), 0f, LabelWidth);
+            Left(UIF.Rect(label), 0f, labelWidth);
 
             GameObject field = UIF.Spawn(UIF.InputFieldPrefab, row.Root);
             row.Field = field != null ? field.GetComponent<InputField>() : null;
-            SetUpField(row.Field, 5);
-            if (row.Field != null) row.Field.onEndEdit.AddListener(onTyped);
-            Right(UIF.Rect(field), 0f, FieldWidth);
+            SetUpField(row.Field, digits);
+            Right(UIF.Rect(field), fieldInset, fieldWidth);
 
             GameObject slider = UIF.Spawn(UIF.SliderPrefab, row.Root);
             row.Slider = slider != null
@@ -255,21 +382,36 @@ namespace MultiplayerTTS.Ui
                 row.Slider.minValue = 0f;
                 row.Slider.maxValue = 1f;
                 row.Slider.wholeNumbers = false;
-                row.Slider.onValueChanged.AddListener(onChanged);
             }
-            Between(UIF.Rect(slider), LabelWidth + 8f, FieldWidth + 8f);
+            Between(UIF.Rect(slider), labelWidth + 8f, sliderRight);
 
+            return row;
+        }
+
+        /// <summary>One of the fixed settings rows, bound to its two handlers.</summary>
+        private Row BuildRow(string caption,
+                             UnityEngine.Events.UnityAction<float> onChanged,
+                             UnityEngine.Events.UnityAction<string> onTyped)
+        {
+            Row row = NewRow(caption, LabelWidth, 0f, FieldWidth,
+                             FieldWidth + 8f, 5);
+
+            if (row.Slider != null) row.Slider.onValueChanged.AddListener(onChanged);
+            if (row.Field != null) row.Field.onEndEdit.AddListener(onTyped);
             return row;
         }
 
         /// <summary>
         /// Common setup for a value box.
         ///
-        /// Nothing here holds Besiege's keyboard: the Input Field prefab
-        /// carries <c>StopsHotkeysWhenInputFieldFocused</c> already, which is
-        /// one of the better reasons to use UI Factory's field rather than a
-        /// hand-built one. Without that behaviour, typing "100" into a box
-        /// drives the camera and fires block keys.
+        /// The Input Field prefab carries UI Factory's
+        /// <c>StopsHotkeysWhenInputFieldFocused</c>, which is one of the better
+        /// reasons to use its field rather than a hand-built one: without it,
+        /// typing "100" into a box drives the camera and fires block keys.
+        ///
+        /// It is not quite enough on its own, because it gives the keyboard
+        /// back one Update too early and Enter then reaches the chat window.
+        /// See <c>HoldHotkeys</c>.
         /// </summary>
         private static void SetUpField(InputField field, int limit)
         {
@@ -291,9 +433,91 @@ namespace MultiplayerTTS.Ui
 
         private void Update()
         {
+            HoldHotkeys();
+
             if (Time.unscaledTime < nextPlayerScan) return;
             nextPlayerScan = Time.unscaledTime + 0.5f;
             RefreshPlayers(false);
+        }
+
+        /// <summary>
+        /// Keep Besiege's hotkeys stopped for a few frames after a value box
+        /// loses focus.
+        ///
+        /// Without this, pressing Enter in a value box shuts the chat window
+        /// and takes this panel down with it. The chain is worth writing down,
+        /// because nothing about it is a race that "usually" happens -- it
+        /// fires every single time:
+        ///
+        /// <list type="number">
+        /// <item><c>ChatView</c> closes on its toggle key, and the key is only
+        ///   read when hotkeys are live: <c>InputManager.ToggleChat()</c>
+        ///   returns false outright while <c>StatMaster.stopHotkeys</c> is
+        ///   set. That check happens in <c>CanvasInputView.LateUpdate</c>.</item>
+        /// <item>UI Factory's own <c>StopsHotkeysWhenInputFieldFocused</c>
+        ///   holds the stop while a field has focus and releases it the moment
+        ///   focus goes -- from <c>Update</c>.</item>
+        /// <item>Enter deactivates the field. So on that one frame the release
+        ///   runs in Update, and <c>ChatView</c> reads the key in LateUpdate,
+        ///   by which time the guard is already gone.</item>
+        /// </list>
+        ///
+        /// Update always precedes LateUpdate, so the release always lands
+        /// before the check. Holding the stop a few frames longer closes the
+        /// gap and costs nothing: hotkeys stay dead for about 50 ms after the
+        /// player finishes typing, which is not perceptible.
+        ///
+        /// <c>StatMaster.StopHotKeys</c> is a counter, not a flag -- true
+        /// increments and false decrements, and it logs "stopHotCounter &lt; 0!"
+        /// if it goes negative -- so every hold here is matched by exactly one
+        /// release, including the one in <see cref="OnDisable"/>. Holding it
+        /// alongside UI Factory's own hold is fine and is the point of its
+        /// being a counter.
+        /// </summary>
+        private void HoldHotkeys()
+        {
+            bool typing = AnyFieldFocused();
+
+            if (typing) hotkeyHold = HotkeyHoldFrames;
+            else if (hotkeyHold > 0) hotkeyHold--;
+
+            bool want = typing || hotkeyHold > 0;
+            if (want == holdingHotkeys) return;
+
+            holdingHotkeys = want;
+            StatMaster.StopHotKeys(want);
+        }
+
+        /// <summary>
+        /// Give the hold back. Closing the panel disables this object and
+        /// <see cref="Update"/> stops running with it, so without this the
+        /// counter never comes back down and the player loses every hotkey in
+        /// the game until they restart it.
+        /// </summary>
+        private void ReleaseHotkeys()
+        {
+            if (!holdingHotkeys) return;
+
+            holdingHotkeys = false;
+            hotkeyHold = 0;
+            StatMaster.StopHotKeys(false);
+        }
+
+        private bool AnyFieldFocused()
+        {
+            if (Focused(master) || Focused(own) || Focused(speed)
+                || Focused(spatial) || Focused(range)) return true;
+
+            for (int i = 0; i < rows.Count; i++)
+            {
+                if (rows[i] != null && Focused(rows[i].Control)) return true;
+            }
+            return false;
+        }
+
+        private static bool Focused(Row row)
+        {
+            return row != null && row.Field != null && row.Field.isFocused;
         }
 
         /// <summary>
@@ -365,6 +589,7 @@ namespace MultiplayerTTS.Ui
             }
 
             UpdateRowValues();
+            FitToContent();
         }
 
         private bool SameAs(List<string> names)
@@ -380,13 +605,10 @@ namespace MultiplayerTTS.Ui
         private PlayerRow NewPlayerRow()
         {
             PlayerRow row = new PlayerRow();
-            row.Control = new Row();
-
-            GameObject holder = UIF.Spawn(UIF.Empty, content);
-            if (holder == null) return row;
-
-            row.Control.Root = UIF.Rect(holder);
-            AddHeight(row.Control.Root, RowHeight);
+            row.Control = NewRow("", PlayerNameWidth, MuteWidth + 6f,
+                                 PlayerFieldWidth,
+                                 MuteWidth + PlayerFieldWidth + 14f, 3);
+            if (row.Control.Root == null) return row;
 
             // Keep the player rows together under the PLAYERS header rather
             // than at the end of the layout group, where they were spawned.
@@ -396,34 +618,9 @@ namespace MultiplayerTTS.Ui
                     playersHeader.GetSiblingIndex() + 1 + rows.Count);
             }
 
-            GameObject label = UIF.Spawn(UIF.TextPrefab, row.Control.Root);
-            row.Control.Label = UIF.Caption(label, "");
-            if (row.Control.Label != null)
-            {
-                row.Control.Label.alignment = TextAnchor.MiddleLeft;
-            }
-            Left(UIF.Rect(label), 0f, PlayerNameWidth);
-
             row.Mute = UIF.Spawn(UIF.TextButton, row.Control.Root);
-            row.MuteCaption = UIF.Caption(row.Mute, "mute");
+            row.MuteCaption = UIF.Caption(row.Mute, MuteWord(1f));
             Right(UIF.Rect(row.Mute), 0f, MuteWidth);
-
-            GameObject field = UIF.Spawn(UIF.InputFieldPrefab, row.Control.Root);
-            row.Control.Field = field != null ? field.GetComponent<InputField>() : null;
-            SetUpField(row.Control.Field, 3);
-            Right(UIF.Rect(field), MuteWidth + 6f, PlayerFieldWidth);
-
-            GameObject slider = UIF.Spawn(UIF.SliderPrefab, row.Control.Root);
-            row.Control.Slider = slider != null
-                ? slider.GetComponent<UnityEngine.UI.Slider>() : null;
-            if (row.Control.Slider != null)
-            {
-                row.Control.Slider.minValue = 0f;
-                row.Control.Slider.maxValue = 1f;
-                row.Control.Slider.wholeNumbers = false;
-            }
-            Between(UIF.Rect(slider), PlayerNameWidth + 8f,
-                    MuteWidth + PlayerFieldWidth + 14f);
 
             // The row is captured, the player name is not: the handlers read
             // row.PlayerName at the moment they fire, so a rebound row writes to
@@ -462,10 +659,7 @@ namespace MultiplayerTTS.Ui
                 float v = Manager.Settings.GetPlayerVolume(row.PlayerName);
                 if (row.Control.Slider != null) row.Control.Slider.value = v;
                 SetField(row.Control.Field, v * 100f);
-                if (row.MuteCaption != null)
-                {
-                    row.MuteCaption.text = v <= 0.0001f ? "unmute" : "mute";
-                }
+                if (row.MuteCaption != null) row.MuteCaption.text = MuteWord(v);
             }
             binding = false;
         }
@@ -516,6 +710,16 @@ namespace MultiplayerTTS.Ui
         {
             if (field == null || field.isFocused) return;
             field.text = Mathf.RoundToInt(shown).ToString();
+        }
+
+        /// <summary>
+        /// What the button beside a player does next. Silent is the only state
+        /// worth a different word, and the threshold is the same one the mute
+        /// button and the console both treat as off.
+        /// </summary>
+        private static string MuteWord(float volume)
+        {
+            return volume <= 0.0001f ? "unmute" : "mute";
         }
 
         private static bool ReadNumber(string text, out float value)
@@ -576,26 +780,12 @@ namespace MultiplayerTTS.Ui
             Save();
         }
 
-        /// <summary>
-        /// Range applies to everyone -- every other player and your own
-        /// messages alike. It is one setting rather than one per speaker
-        /// because it describes the listener's own hearing, not any particular
-        /// speaker's voice.
-        /// </summary>
         private void OnRangeChanged(float v)
         {
             if (binding || Manager == null) return;
-            SetRange(Mathf.Lerp(RangeMin, RangeMax, v));
+            Manager.Settings.SetRange(Mathf.Lerp(RangeMin, RangeMax, v));
             SetField(range.Field, Manager.Settings.MaxDistance);
             Save();
-        }
-
-        private void SetRange(float metres)
-        {
-            metres = Mathf.Clamp(metres, RangeMin, RangeMax);
-            Manager.Settings.MaxDistance = metres;
-            Manager.Settings.ReferenceDistance =
-                Mathf.Max(1f, metres * ReferenceFraction);
         }
 
         // A typed number is clamped and then written back, so an out-of-range
@@ -644,7 +834,7 @@ namespace MultiplayerTTS.Ui
         private void OnRangeTyped(string text)
         {
             float v;
-            if (ReadNumber(text, out v)) SetRange(v);
+            if (ReadNumber(text, out v)) Manager.Settings.SetRange(v);
             Commit();
         }
 
@@ -659,10 +849,7 @@ namespace MultiplayerTTS.Ui
             if (binding || Manager == null || row.PlayerName == null) return;
             Manager.Settings.SetPlayerVolume(row.PlayerName, v);
             SetField(row.Control.Field, v * 100f);
-            if (row.MuteCaption != null)
-            {
-                row.MuteCaption.text = v <= 0.0001f ? "unmute" : "mute";
-            }
+            if (row.MuteCaption != null) row.MuteCaption.text = MuteWord(v);
             Save();
         }
 
@@ -732,11 +919,22 @@ namespace MultiplayerTTS.Ui
         /// <summary>
         /// Closing the panel disables this object, and neither Update nor
         /// LateUpdate runs on a disabled one -- so a slider moved and then
-        /// immediately closed would leave its save pending forever.
+        /// immediately closed would leave its save pending forever, and the
+        /// hotkey hold would never be given back.
         /// </summary>
         private void OnDisable()
         {
+            ReleaseHotkeys();
             Flush();
+        }
+
+        /// <summary>
+        /// The panel going away with the chat window is a destroy, not a
+        /// disable, and an unbalanced hold would outlive it.
+        /// </summary>
+        private void OnDestroy()
+        {
+            ReleaseHotkeys();
         }
 
         private void Flush()

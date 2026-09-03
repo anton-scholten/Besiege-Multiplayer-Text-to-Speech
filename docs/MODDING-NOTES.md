@@ -350,3 +350,186 @@ Two consequences:
   Besiege's; angle brackets later in the line belong to the player. That
   matters if you support DECtalk markup, where `[dh<300,10>]` carries a note's
   duration and pitch — a blanket strip silently removes every one of them.
+
+## A UI Factory Window must not be parented into Besiege's own UI
+
+Docking a panel next to the chat window by making it a *child* of the chat
+window is the obvious arrangement, and it is what note 19's "parenting to the
+container gets show/hide for free" leads you to. For a plain button that is
+right. For a UI Factory `Window` it is not.
+
+`Window`'s scroll view clips with a stencil `Mask` on its `Viewport`, and so
+does the chat window's own message list. uGUI assigns stencil bits by depth, so
+two masks at the same depth under one parent get the same bit and cut holes in
+each other. What that looks like in game is the **chat's own text drawing
+outside its viewport and across the panel** — which reads as a transparency or
+draw-order bug and is neither.
+
+Parent a Window to `Besiege.UI.Make.ScreenCanvas` instead, which is what it is
+for. Two things then have to be done by hand that came free before:
+
+- **position**, from the anchor's world corners:
+
+  ```csharp
+  Vector3[] corners = new Vector3[4];
+  anchor.GetWorldCorners(corners);            // 0 = bottom-left
+  Vector2 screen = RectTransformUtility.WorldToScreenPoint(camera, corners[0]);
+  RectTransformUtility.ScreenPointToLocalPointInRectangle(
+      parentRect, screen, camera, out local);
+  ```
+
+  with `camera` null for a `ScreenSpaceOverlay` canvas.
+
+- **visibility**, mirrored from the anchor's `activeInHierarchy`.
+
+Position it when the panel opens, **not** every frame: the `Window` prefab
+carries a `Drag` on its top bar, and repositioning continuously drags it back
+out of the player's hand.
+
+The gear button beside it can stay a child of the chat window. It is an
+`Icon Button` with no mask of its own, so it has nothing to conflict with, and
+it keeps the free show-and-hide.
+
+## A UI Factory Window is translucent, so it must fit its contents
+
+`Window`'s background is an `Image` at alpha 0.39 with a `Blur` child at alpha
+0.40 over it, and the blur really does show the game through the panel — that
+is the frosted look it is for.
+
+The consequence is easy to miss: **any part of the window your rows do not
+reach is a pane of blurred scenery.** With a fixed window height and a shorter
+list of rows, the empty band at the bottom shows a blurred copy of whatever is
+behind it — the chat input bar, the block toolbar — and reads as the panel
+leaking other UI through itself. It is not a leak, a draw-order bug or a mask
+problem; the window is simply bigger than what was put in it.
+
+`VerticalLayoutGroup` plus `ContentSizeFitter` sizes the scroll view's
+**content**, not the window, so the window has to be told:
+
+```csharp
+LayoutRebuilder.ForceRebuildLayoutImmediate(content);
+float needed = LayoutUtility.GetPreferredHeight(content) + 50f;   // 50 = TopBar
+windowRect.sizeDelta = new Vector2(width, Mathf.Clamp(needed, min, max));
+```
+
+Re-run it whenever the row count changes. With the window's pivot at the bottom
+it then grows upwards and keeps its lower edge where it was put.
+
+`BlurHandler` is worth knowing about while you are here: it assigns one shared
+static material to the Image and enables or disables it every frame from
+`BlurHandler.BlurActive`, which is Besiege's own graphics option. So "blur off"
+is a state every UI Factory window already handles — turning the `Blur` child
+off for one window is safe if you ever need to — but it is not the fix for
+this, and it costs the panel its intended look.
+
+## Speech next to instruments: a peak ceiling is the wrong control
+
+This mod's speech sat far quieter than the Music mod's instrument blocks from
+the same author, at settings that looked equivalent. The cause is crest factor,
+not gain.
+
+Speech runs a long way above its own average on plosives and sibilants -- a
+factor of four or five is ordinary -- so normalising with a **peak ceiling**
+lets one or two samples decide the level of the whole line, and everything else
+sits well under it. A sustained instrument note has a far lower crest factor, so
+the same ceiling leaves it much louder. Measured here: speech landed at about
+0.09 RMS where the instruments run near full scale.
+
+The fix is the one the Music mod already uses on every block: set the level from
+**RMS** and round the peaks off with a soft knee, rather than scaling the whole
+signal down until the loudest transient fits.
+
+```csharp
+// linear to 0.7, then a curve that approaches 1 and never reaches it
+if (s > 0.7f)
+    s = 0.7f + 0.3f * (1f - 1f / (1f + (s - 0.7f) * 3f));
+```
+
+Speech went from ~0.09 RMS to ~0.23 at the same peak, which is about 8 dB, with
+nothing clipped -- the knee cannot produce a sample outside ±1 by construction,
+so the peak test in the offline suite still passes.
+
+Worth knowing about `Master.cs` in that mod too: sixty blocks each peaking near
+one sum to a signal peaking near sixty, and no block can see the mix it is part
+of. Its answer is for every block to report its own peak and read back one
+shared gain, summed as **power** (`sqrt(sum of squares)`) rather than as peaks,
+because separate notes are not in phase. A mod that adds one more voice to that
+mix should either join that scheme or, as here, stay well inside its own
+headroom.
+
+## Give a UI Factory Window a canvas of your own
+
+Three separate bugs here all had one root: the window was not on a full-screen
+canvas of this mod's own.
+
+**Do not parent it into Besiege's UI.** The Window prefab clips with a stencil
+`Mask`, and so does the chat window's message list. Two masks at the same depth
+under one parent share a stencil bit and cut holes in each other, which shows up
+as Besiege's own text drawing across the panel.
+
+**Do not wrap it in a bare `GameObject` either.** `new GameObject(name,
+typeof(RectTransform))` has a **zero-sized** rect. Anything that measures the
+window against its parent then measures against 0x0 — an on-screen clamp
+concludes the window can never fit and pins it to a corner every frame, which
+also makes it undraggable. Put the component on the Window itself.
+
+**`Besiege.UI.Make.ScreenCanvas` is not the answer either**, even though it is
+public and `Make.Prefab` falls back to it. It is UI Factory's own canvas, shared
+with whatever else is on it, and it is assigned by `Besiege.UI.Mod` rather than
+by `Make` — so its lifetime is not obviously yours.
+
+Make one:
+
+```csharp
+canvas = go.AddComponent<Canvas>();
+canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+canvas.sortingOrder = 2400;
+CanvasScaler scaler = go.AddComponent<CanvasScaler>();
+scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+scaler.referenceResolution = new Vector2(1920f, 1080f);
+scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+scaler.matchWidthOrHeight = 1f;
+go.AddComponent<GraphicRaycaster>();
+```
+
+That is what the Music mod does for its block panels, and it settles the stencil
+question, the measuring question and the draw order in one. Put it on a
+`DontDestroyOnLoad` object so it survives the scene change that takes the chat
+window away.
+
+**And clamp the window on screen.** The prefab's top bar is a `Drag` with no
+bounds of its own, so the panel can be dragged off the edge and lost — there is
+no way back if the only control is a button that toggles it.
+
+## The Window's blur is a tooltip shader, and it misbehaves on a big window
+
+The frosting on UI Factory's `Window` is an Image running Besiege's own
+`Custom/TooltipBlur (Larger)`, which `Besiege.UI.Mod` finds by name and hands to
+`BlurHandler`. The name is the warning: it is written for a **tooltip** — small,
+short-lived, on Besiege's own canvas.
+
+On a large window on a canvas of its own, with its own `sortingOrder`, what that
+grab captures is not the composition the shader assumes. The result is a
+displaced copy of other screen content: the chat window's buttons drawn inside
+the panel, and pieces of the panel's own title drawn outside it. Everything
+wrong in the picture is blurred and everything sharp is in its right place,
+which is how to tell this apart from a layout or masking fault.
+
+There is nothing to patch — the shader is the game's, and a mod cannot reach it.
+Switch the blur off:
+
+```csharp
+Transform blur = window.transform.Find("Blur");
+if (blur != null) blur.gameObject.SetActive(false);   // the object, not the Image
+```
+
+It must be the **GameObject**. `BlurHandler.Update` writes `image.enabled` every
+frame from `BlurHandler.BlurActive`, so disabling the Image lasts one frame; an
+inactive object stops the handler running at all. And this is not going around
+the API: that same handler turns this Image off whenever the player switches
+blur off in Besiege's graphics options, so a UI Factory window without it is a
+state the game ships.
+
+Then raise the window's own plate. It is alpha 0.39 and was drawn expecting the
+frosting behind it, so on its own it leaves the panel unreadable over a bright
+level.
