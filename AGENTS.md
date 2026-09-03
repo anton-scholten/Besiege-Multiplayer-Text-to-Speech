@@ -18,6 +18,7 @@ MultiplayerTTS/MultiplayerTTS.dll    built by tools/build.sh (checked in, the ga
 MultiplayerTTS/Resources/            gear icon, and the two images Mod.xml names
 Thumbnail.png, Thumbnail.xcf         the Workshop thumbnail, drawn by hand, copied into Resources/
 Background.jpg, TTS.png              what tools/make_icon.py composes the icon from
+Promo_1.jpg                          the screenshot in the README and on the Workshop page
 src/ModEntry.cs                      entry point, console commands
 src/ChatWatcher.cs                   the log hook that is the only way to read chat
 src/TtsManager.cs                    worker thread, voice assignment, core-block lookup

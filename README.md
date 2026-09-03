@@ -1,5 +1,7 @@
 # Besiege Multiplayer Text to Speech
 
+<img src="Thumbnail.png" alt="" width="132" align="right">
+
 Multiplayer chat, read aloud out of the speaker's own machine, in
 [Besiege](https://store.steampowered.com/app/346010/Besiege/).
 
@@ -13,6 +15,8 @@ Moonbase Alpha's markup because that markup *is* DECtalk's.
 (Workshop item `2913469777`) is what the options panel is built from. Without it
 the mod still loads and still reads chat aloud; every setting stays reachable
 from the `tts` console command.
+
+<br clear="right">
 
 ## Install
 
@@ -35,6 +39,8 @@ build uses Besiege's own compiler.
 
 Speech starts working on its own in any multiplayer game. A gear sits at the
 bottom-left of the chat window whenever the chat is open, and opens the panel.
+
+![The speech panel open beside the chat window](Promo_1.jpg)
 
 | Setting | Range | What it does |
 | --- | --- | --- |
