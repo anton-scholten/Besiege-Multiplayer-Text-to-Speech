@@ -3,7 +3,7 @@
 	<!-- General information about the mod. -->
 	<Name>Multiplayer Text to Speech</Name>
 	<Author>wizz6rd</Author>
-	<Version>1.0.0</Version>
+	<Version>0.1.0</Version>
 
 	<Description>
 Reads multiplayer chat aloud, in a Klatt formant voice of the same family

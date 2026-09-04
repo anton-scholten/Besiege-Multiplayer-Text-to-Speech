@@ -1,6 +1,6 @@
 # Besiege Multiplayer Text to Speech
 
-<img src="Thumbnail.png" alt="" width="132" align="right">
+<img src="MultiplayerTTS/Resources/Thumbnail.png" alt="thumbnail" width="200" align="right">
 
 Multiplayer chat, read aloud out of the speaker's own machine, in
 [Besiege](https://store.steampowered.com/app/346010/Besiege/).
@@ -12,9 +12,8 @@ lands on that flat, faintly robotic delivery on purpose, and it speaks
 Moonbase Alpha's markup because that markup *is* DECtalk's.
 
 **[UI Factory](https://steamcommunity.com/sharedfiles/filedetails/?id=2913469777)**
-(Workshop item `2913469777`) is what the options panel is built from. Without it
-the mod still loads and still reads chat aloud; every setting stays reachable
-from the `tts` console command.
+(Workshop item `2913469777`) required for UI.
+Without it the mod still loads and still reads chat aloud; every setting stays reachable from the `tts` console command.
 
 <br clear="right">
 
